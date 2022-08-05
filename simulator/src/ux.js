@@ -10,16 +10,18 @@ import {
 } from './engine';
 import simulationArea from './simulationArea';
 import logixFunction from './data';
-import { newCircuit, circuitProperty } from './circuit';
+import { createNewCircuitScope, circuitProperty } from './circuit';
 import modules from './modules';
 import { updateRestrictedElementsInScope } from './restrictedElementDiv';
 import { paste } from './events';
 import { setProjectName, getProjectName } from './data/save';
 import { changeScale } from './canvasApi';
 import updateTheme from "./themer/themer";
-import { generateImage } from './data/save';
+import { generateImage, generateSaveData } from './data/save';
 import { setupVerilogExportCodeWindow } from './verilog';
 import { setupBitConvertor} from './utils';
+import { updateTestbenchUI, setupTestbenchUI } from './testbench';
+import { applyVerilogTheme } from './Verilog2CV';
 
 export const uxvar = {
     smartDropXX: 50,
@@ -69,9 +71,56 @@ function showContextMenu() {
     $('#contextMenu').css({
         visibility: 'visible',
         opacity: 1,
-        top: `${ctxPos.y}px`,
-        left: `${ctxPos.x}px`,
     });
+
+    var windowHeight = $("#simulationArea").height() - $("#contextMenu").height() - 10;
+    var windowWidth = $("#simulationArea").width() - $("#contextMenu").width() - 10;
+    // for top, left, right, bottom
+    var topPosition;
+    var leftPosition;
+    var rightPosition;
+    var bottomPosition;
+    if (ctxPos.y > windowHeight && ctxPos.x <= windowWidth) {
+        //When user click on bottom-left part of window
+        leftPosition = ctxPos.x;
+        bottomPosition = $(window).height() - ctxPos.y;
+        $("#contextMenu").css({
+            left: `${leftPosition}px`,
+            bottom: `${bottomPosition}px`,
+            right: 'auto',
+            top: 'auto',
+        });
+    } else if (ctxPos.y > windowHeight && ctxPos.x > windowWidth) {
+        //When user click on bottom-right part of window
+        bottomPosition = $(window).height() - ctxPos.y;
+        rightPosition = $(window).width() - ctxPos.x;
+        $("#contextMenu").css({
+            left: 'auto',
+            bottom: `${bottomPosition}px`,
+            right: `${rightPosition}px`,
+            top: 'auto',
+        });
+    } else if (ctxPos.y <= windowHeight && ctxPos.x <= windowWidth) {
+        //When user click on top-left part of window
+        leftPosition = ctxPos.x;
+        topPosition = ctxPos.y;
+        $("#contextMenu").css({
+            left: `${leftPosition}px`,
+            bottom: 'auto',
+            right: 'auto',
+            top: `${topPosition}px`,
+        });
+    } else {
+        //When user click on top-right part of window
+        rightPosition = $(window).width() - ctxPos.x;
+        topPosition = ctxPos.y;
+        $("#contextMenu").css({
+            left: 'auto',
+            bottom: 'auto',
+            right: `${rightPosition}px`,
+            top: `${topPosition}px`,
+        });
+    }
     ctxPos.visible = true;
     return false;
 }
@@ -96,7 +145,7 @@ function menuItemClicked(id, code="") {
         undo();
         undo();
     } else if (id === 5) {
-        newCircuit();
+        createNewCircuitScope();
     } else if (id === 6) {
         logixFunction.createSubCircuitPrompt();
     } else if (id === 7) {
@@ -142,6 +191,11 @@ export function setupUI() {
         logixFunction[this.id]();
     });
     // var dummyCounter=0;
+
+    // calling apply on select theme in dropdown
+    $('.applyTheme').on('change',function () {
+        applyVerilogTheme();
+    });
 
 
     $('.logixModules').hover(function () {
@@ -198,7 +252,7 @@ export function setupUI() {
 
 export function createElement() {
     if (simulationArea.lastSelected && simulationArea.lastSelected.newElement) simulationArea.lastSelected.delete();
-    var obj = new modules[this.id](); 
+    var obj = new modules[this.id]();
     simulationArea.lastSelected = obj;
     uxvar.smartDropXX += 70;
     if (uxvar.smartDropXX / globalScope.scale > width) {
@@ -265,7 +319,7 @@ export function showProperties(obj) {
                 $('#moduleProperty-inner').append("<p>Label Direction: " + $(s).prop('outerHTML') + "</p>");
             }
         }
-            
+
     }
     else if (simulationArea.lastSelected === undefined || ['Wire', 'CircuitElement', 'Node'].indexOf(simulationArea.lastSelected.objectType) !== -1) {
         $('#moduleProperty').show();
@@ -285,9 +339,9 @@ export function showProperties(obj) {
         if (!obj.fixedBitWidth) { $('#moduleProperty-inner').append(`<p><span>BitWidth:</span> <input class='objectPropertyAttribute' type='number'  name='newBitWidth' min='1' max='32' value=${obj.bitWidth}></p>`); }
 
         if (obj.changeInputSize) { $('#moduleProperty-inner').append(`<p><span>Input Size:</span> <input class='objectPropertyAttribute' type='number'  name='changeInputSize' min='2' max='10' value=${obj.inputSize}></p>`); }
-        
+
         if (!obj.propagationDelayFixed) { $('#moduleProperty-inner').append(`<p><span>Delay:</span> <input class='objectPropertyAttribute' type='number'  name='changePropagationDelay' min='0' max='100000' value=${obj.propagationDelay}></p>`); }
-        
+
         if (!obj.disableLabel)
         $('#moduleProperty-inner').append(`<p><span>Label:</span> <input class='objectPropertyAttribute' type='text'  name='setLabel' autocomplete='off'  value='${escapeHtml(obj.label)}'></p>`);
 
@@ -361,7 +415,7 @@ export function showProperties(obj) {
         if (simulationArea.lastSelected && simulationArea.lastSelected[this.name]) {
             simulationArea.lastSelected[this.name](value);
             // Commented out due to property menu refresh bug
-            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet(); 
+            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet();
         } else {
             circuitProperty[this.name](value);
         }
@@ -375,9 +429,9 @@ export function showProperties(obj) {
         if (simulationArea.lastSelected && simulationArea.lastSelected[this.name]) {
             simulationArea.lastSelected[this.name](this.value);
             // Commented out due to property menu refresh bug
-            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet(); 
-        } else { 
-                circuitProperty[this.name](this.checked); 
+            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet();
+        } else {
+                circuitProperty[this.name](this.checked);
             }
     });
 
@@ -389,9 +443,9 @@ export function showProperties(obj) {
         if (simulationArea.lastSelected && simulationArea.lastSelected[this.name]) {
             simulationArea.lastSelected[this.name](this.value);
             // Commented out due to property menu refresh bug
-            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet(); 
-        } else { 
-                circuitProperty[this.name](this.checked); 
+            // prevPropertyObjSet(simulationArea.lastSelected[this.name](this.value)) || prevPropertyObjGet();
+        } else {
+                circuitProperty[this.name](this.checked);
             }
     });
 
@@ -425,94 +479,47 @@ function escapeHtml(unsafe) {
 export function deleteSelected() {
     if (simulationArea.lastSelected && !(simulationArea.lastSelected.objectType === 'Node' && simulationArea.lastSelected.type !== 2)) {
         simulationArea.lastSelected.delete();
-        hideProperties();
     }
-        
-    for (var i = 0; i < simulationArea.multipleObjectSelections.length; i++) {
-        if (!(simulationArea.multipleObjectSelections[i].objectType === 'Node' && simulationArea.multipleObjectSelections[i].type !== 2)) 
-            simulationArea.multipleObjectSelections[i].cleanDelete();
-        hideProperties();
-    }
-    
-    simulationArea.multipleObjectSelections = [];
 
+    for (var i = 0; i < simulationArea.multipleObjectSelections.length; i++) {
+        if (!(simulationArea.multipleObjectSelections[i].objectType === 'Node' && simulationArea.multipleObjectSelections[i].type !== 2))
+            simulationArea.multipleObjectSelections[i].cleanDelete();
+    }
+
+    simulationArea.multipleObjectSelections = [];
+    simulationArea.lastSelected = undefined;
+    showProperties(simulationArea.lastSelected);
     // Updated restricted elements
     updateCanvasSet(true);
     scheduleUpdate();
     updateRestrictedElementsInScope();
 }
-
-/**
- * listener for opening the prompt for bin conversion
- * @category ux
- */
-$('#bitconverter').on('click',() => {
-    $('#bitconverterprompt').dialog({
-    resizable:false,
-        buttons: [
-            {
-                text: 'Reset',
-                click() {
-                    $('#decimalInput').val('0');
-                    $('#binaryInput').val('0');
-                    $('#octalInput').val('0');
-                    $('#hexInput').val('0');
-                },
-            },
-        ],
-    });
-});
-
-// convertors
-const convertors = {
-    dec2bin: (x) => `0b${x.toString(2)}`,
-    dec2hex: (x) => `0x${x.toString(16)}`,
-    dec2octal: (x) => `0${x.toString(8)}`,
-};
-
-function setBaseValues(x) {
-    if (isNaN(x)) return;
-    $('#binaryInput').val(convertors.dec2bin(x));
-    $('#octalInput').val(convertors.dec2octal(x));
-    $('#hexInput').val(convertors.dec2hex(x));
-    $('#decimalInput').val(x);
-}
-
-$('#decimalInput').on('keyup', () => {
-    var x = parseInt($('#decimalInput').val(), 10);
-    setBaseValues(x);
-});
-
-$('#binaryInput').on('keyup', () => {
-    var x = parseInt($('#binaryInput').val(), 2);
-    setBaseValues(x);
-});
-
-$('#hexInput').on('keyup', () => {
-    var x = parseInt($('#hexInput').val(), 16);
-    setBaseValues(x);
-});
-
-$('#octalInput').on('keyup', () => {
-    var x = parseInt($('#octalInput').val(), 8);
-    setBaseValues(x);
-});
-
 export function setupPanels() {
     $('#dragQPanel')
         .on('mousedown', () => $('.quick-btn').draggable({ disabled: false, containment: 'window' }))
         .on('mouseup', () => $('.quick-btn').draggable({ disabled: true }));
-    
+
     setupPanelListeners('.elementPanel');
     setupPanelListeners('.layoutElementPanel');
     setupPanelListeners('#moduleProperty');
     setupPanelListeners('#layoutDialog');
     setupPanelListeners('#verilogEditorPanel');
     setupPanelListeners('.timing-diagram-panel');
+    setupPanelListeners('.testbench-manual-panel');
 
     // Minimize Timing Diagram (takes too much space)
     $('.timing-diagram-panel .minimize').trigger('click');
-    
+
+    // Update the Testbench Panel UI
+    updateTestbenchUI();
+    // Minimize Testbench UI
+    $('.testbench-manual-panel .minimize').trigger('click');
+
+    // Hack because minimizing panel then maximizing sets visibility recursively
+    // updateTestbenchUI calls some hide()s which are undone by maximization
+    // TODO: Remove hack
+    $('.testbench-manual-panel .maximize').on('click', setupTestbenchUI);
+
     $('#projectName').on('click', () => {
         $("input[name='setProjectName']").focus().select();
     });
@@ -534,8 +541,8 @@ function setupPanelListeners(panelSelector) {
         $(panelSelector).css('z-index', '100');
     })
     var minimized = false;
-    $(headerSelector).on('dblclick', ()=> minimized ? 
-                                        $(maximizeSelector).trigger('click') : 
+    $(headerSelector).on('dblclick', ()=> minimized ?
+                                        $(maximizeSelector).trigger('click') :
                                         $(minimizeSelector).trigger('click'));
     // Minimize
     $(minimizeSelector).on('click', () => {
@@ -553,18 +560,30 @@ function setupPanelListeners(panelSelector) {
     });
 }
 
+export function exitFullView(){
+    $('.navbar').show();
+    $('.modules').show();
+    $('.report-sidebar').show();
+    $('#tabsBar').show();
+    $('#exitViewBtn').remove();
+    $('#moduleProperty').show();
+    $('.timing-diagram-panel').show();
+    $('.testbench-manual-panel').show();
+}
+
 export function fullView () {
-    const onClick = `onclick="(() => {$('.navbar').show(); $('.modules').show(); $('.report-sidebar').show(); $('#tabsBar').show(); $('#exitViewBtn').remove(); $('#moduleProperty').show();})()"`
-    const markUp = `<button id='exitViewBtn' ${onClick} >Exit Full Preview</button>`
+    const markUp = `<button id='exitViewBtn' >Exit Full Preview</button>`
     $('.navbar').hide()
     $('.modules').hide()
     $('.report-sidebar').hide()
     $('#tabsBar').hide()
     $('#moduleProperty').hide()
+    $('.timing-diagram-panel').hide();
+    $('.testbench-manual-panel').hide();
     $('#exitView').append(markUp);
+    $('#exitViewBtn').on('click', exitFullView);
 }
-
-/** 
+/**
     Fills the elements that can be displayed in the subcircuit, in the subcircuit menu
 **/
 export function fillSubcircuitElements() {
@@ -600,7 +619,7 @@ export function fillSubcircuitElements() {
 
     if(subCircuitElementExists) {
         $('#subcircuitMenu').accordion("refresh");
-    }   
+    }
     else {
         $('#subcircuitMenu').append("<p>No layout elements available</p>");
     }
@@ -616,24 +635,40 @@ export function fillSubcircuitElements() {
         simulationArea.lastSelected = element;
         this.parentElement.removeChild(this);
     });
-} 
+}
 
 async function postUserIssue(message) {
 
     var img = generateImage("jpeg", "full", false, 1, false).split(',')[1];
-    const result = await $.ajax({
-            url: 'https://api.imgur.com/3/image',
-            type: 'POST',
-            data: {
-                image: img
-            },
-            dataType: 'json',
-            headers: {
-                Authorization: 'Client-ID 9a33b3b370f1054'
-            },
-        });
 
-    message += "\n" + result.data.link;
+    let result;
+    try {
+        result = await $.ajax({
+                url: 'https://api.imgur.com/3/image',
+                type: 'POST',
+                data: {
+                    image: img
+                },
+                dataType: 'json',
+                headers: {
+                    Authorization: 'Client-ID 9a33b3b370f1054'
+                },
+            });
+    } catch (err) {
+        console.error("Could not generate image, reporting anyway");
+    }
+
+    if (result) message += "\n" + result.data.link;
+
+    // Generate circuit data for reporting
+    let circuitData;
+    try {
+        // Writing default project name to prevent unnecessary prompt in case the
+        // project is unnamed
+        circuitData = generateSaveData("Untitled");
+    } catch (err) {
+        circuitData = `Circuit data generation failed: ${err}`;
+    }
 
     $.ajax({
         url: '/simulator/post_issue',
@@ -643,6 +678,7 @@ async function postUserIssue(message) {
         },
         data: {
             "text": message,
+            "circuit_data": circuitData,
         },
         success: function(response) {
             $('#result').html("<i class='fa fa-check' style='color:green'></i> You've successfully submitted the issue. Thanks for improving our platform.");

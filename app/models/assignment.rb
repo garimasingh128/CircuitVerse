@@ -2,6 +2,10 @@
 
 class Assignment < ApplicationRecord
   validates :name, length: { minimum: 1 }
+  validates :grading_scale, inclusion: {
+    in: %w[percent],
+    message: "needs to be fixed at 1-100 for passing the grade back to LMS"
+  }, if: :lti_integrated?
   belongs_to :group
   has_many :projects, class_name: "Project", dependent: :nullify
 
@@ -37,12 +41,22 @@ class Assignment < ApplicationRecord
     end
   end
 
+  def clean_restricted_elements
+    restricted_elements = JSON.parse restrictions
+    restricted_elements.map! { |element| ERB::Util.html_escape element }
+    restricted_elements.to_json
+  end
+
   def graded?
     grading_scale != "no_scale"
   end
 
   def elements_restricted?
     restrictions != "[]"
+  end
+
+  def lti_integrated?
+    lti_consumer_key.present? && lti_shared_secret.present?
   end
 
   def project_order
